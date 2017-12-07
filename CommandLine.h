@@ -230,11 +230,14 @@ void ledCommand() {
   else LED_ON();
 }
 void testAddrCommand(){
-  Serial.print("I2C address pin testing ...");
-  if(addressTest())
-    Serial.println("Passed");
-  else
-    Serial.println("Failed");
+  eCommandCode=eTest;
+  execute=true;                         
+  
+//  Serial.print("I2C address pin testing ...");
+//  if(addressTest())
+//    Serial.println("Passed");
+//  else
+//    Serial.println("Failed");
 }
 void read9808tCommand(){
   eCommandCode=eRead9808T;
@@ -256,14 +259,13 @@ void delayCommand(){                    //Set the interval (mS) of repeating com
 }
 void setRegCommand(){
   uint8_t reg = readNumber();
-  uint16_t data = readNumber();
+  uint16_t data = readHex();
   tempsensor.write16(reg,data);
-  
 }
 void readRegCommand(){
   uint8_t reg = readNumber();
-   Serial.println(tempsensor.read16(reg));
-  
+  Serial.print("0x");
+  Serial.println(tempsensor.read16(reg),HEX);
 }
 /****************************************************
    DoMyCommand

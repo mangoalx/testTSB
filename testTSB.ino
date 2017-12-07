@@ -9,7 +9,9 @@
  * Repeatable commands list
  * 
  *******************************************************************/
-enum RepeatCommands {eNullCommand=0,eReadAlert,eRead1080TH,eRead1WT,eRead9808T};
+enum RepeatCommands {eNullCommand=0,eReadAlert,eTest,eRead9808T};
+enum TestStatus {eWaitConnect=0,eTestAddr,eTestAlert,eTestTemp,ePassed,eFailed,eTestEnd};
+
 #define LOOPDELAY 100             //100mS delay for loop routine
 
 //TSB to feather connection
@@ -23,12 +25,19 @@ enum RepeatCommands {eNullCommand=0,eReadAlert,eRead1080TH,eRead1WT,eRead9808T};
 #define A1    9
 #define A2    10
 
-//Status control variables
-unsigned int delayCounter=0;
-int delay100mS = 20;                                  //wait time between repeated commands,in 100mS
-enum RepeatCommands eCommandCode = eNullCommand;      //commandCode decide which command to execute
-bool repeat = false, execute = false;     //bool switches to control if execute / repeat a command
+#define MAX_TEMPERATURE 35
+#define MIN_TEMPERATURE 15
 
+#define DEBOUNCENUM 5  //debounce time for new TSB detection is 5x DELAYX100MS x 100mS
+
+//Status control variables
+#define DELAYX100MS   5       //delay how many 100mS before repeat an execution
+int count=0;                                  //for debounce
+unsigned int delayCounter=0;
+int delay100mS = 5;                                  //wait time between repeated commands,in 100mS
+enum RepeatCommands eCommandCode = eTest;      //commandCode decide which command to execute
+bool repeat = true, execute = true;     //bool switches to control if execute / repeat a command
+enum TestStatus eStatusCode = eWaitConnect;
 Adafruit_MCP9808 tempsensor = Adafruit_MCP9808();
 
 //prototype of functions
@@ -60,22 +69,102 @@ bool addressTest(void);
   }
 
   void loop() {
+    float temperature;
     bool received = getCommandLineFromSerialPort(CommandLine);      //global CommandLine is defined in CommandLine.h
 //    int16_t Vbus,Vshunt;
     if (received) DoMyCommand(CommandLine);
-    if(++delayCounter>=delay100mS){
+    if(++delayCounter>=DELAYX100MS){
       delayCounter=0;
       if(repeat) execute=true;
     }
     if(execute){
       switch(eCommandCode){
-         case eRead9808T:
+        case eRead9808T:
           Serial.print("MCP9808 temp: ");
           Serial.println(tempsensor.readTempC());
           break;
-         case eReadAlert:
+        case eReadAlert:
           Serial.print("Alert status: ");
           Serial.println(readAlert());
+          break;
+        case eTest:
+          switch(eStatusCode){
+            case eWaitConnect:
+              if(verifyAddress(DEFAULT_ADDRESS)){
+                if(++count>DEBOUNCENUM){
+                  eStatusCode=eTestAddr;
+                  LED_OFF();                            //If last test failed, we turn off LED here, when started next test
+                  Serial.print("\n\n\n");
+                  Serial.println("New device found, starting test ......");
+                }
+              }
+              else count=0;
+              break;
+            case eTestAddr:
+              Serial.print("I2C address pins testing ...");
+              if(addressTest()){
+                Serial.println("Passed");
+                eStatusCode=eTestAlert;
+              }
+              else{
+                Serial.println("Failed");
+                eStatusCode=eFailed;
+              }
+              break;
+            case eTestAlert:
+              Serial.print("Alert pin testing ...");
+              if(alertTest()){
+                Serial.println("Passed");
+                eStatusCode=eTestTemp;
+              }
+              else{
+                Serial.println("Failed");
+                eStatusCode=eFailed;
+              }
+              break;
+            case eTestTemp:
+              temperature=tempsensor.readTempC();
+              
+              Serial.print("Temperature reading :");
+              Serial.print(temperature);
+
+              if((temperature>MAX_TEMPERATURE) || (temperature<MIN_TEMPERATURE)){
+                Serial.println("------Failed");
+                Serial.println("Temperature is out of range");
+                eStatusCode=eFailed;
+              }
+              else{
+                Serial.println("------Passed");
+                eStatusCode=ePassed;
+              }
+              break;
+            case ePassed:
+              if(!verifyAddress(DEFAULT_ADDRESS)){        //Switch to Wait for connect status if DUT is disconnected
+                eStatusCode=eTestEnd;
+                Serial.print("\r\n");
+//                count=0;                                //initialize counter, for device connection detect debounce
+              }
+              else{
+                Serial.print("Temperature reading :");      //Keep reading temperature so tester can observe the reading varies
+                Serial.print(tempsensor.readTempC());
+                Serial.print("\r");                         //stay the same line, so user read temperature the same place
+              }
+              break;
+            case eFailed:
+              LED_ON();           //Turn on led to indicate a failure
+              if(!verifyAddress(DEFAULT_ADDRESS))
+                eStatusCode=eTestEnd;
+              break;
+            case eTestEnd:
+              eStatusCode=eWaitConnect;
+              count=0;                                //initialize counter, for device connection detect debounce
+              Serial.println("------Test ended. Waiting for next device--------");
+              break;
+            default:
+              Serial.print("Unknown status,ask john to debug\r");
+          }
+//          Serial.print("Alert status: ");
+//          Serial.println(readAlert());
           break;
         case eNullCommand:                                        //do nothing for null or unknown command
         default:
@@ -139,5 +228,14 @@ bool addrPinTest(byte pinNo,byte addr){
 }
 int readAlert(void){
   return digitalRead(ALERT);
+}
+bool alertTest(void){
+  bool result=false;
+  if(readAlert()==1){
+    tempsensor.write16(MCP9808_REG_CONFIG,MCP9808_REG_CONFIG_ALERTCTRL);      //Set config register to enable alert
+    result=(readAlert()==0);
+    tempsensor.write16(MCP9808_REG_CONFIG,0);                                 //Reset config to power-on default
+  }
+  return result;
 }
 
