@@ -12,6 +12,16 @@
 enum RepeatCommands {eNullCommand=0,eReadAlert,eTest,eRead9808T};
 enum TestStatus {eWaitConnect=0,eTestAddr,eTestAlert,eTestTemp,ePassed,eFailed,eTestEnd};
 
+const char * testStatusMessages[]={
+  "Wait for connect",
+  "Address test",
+  "Alert test",
+  "Temperature test",
+  "Passed",
+  "Failed",
+  "Test ended"
+};
+
 #define LOOPDELAY 100             //100mS delay for loop routine
 
 //TSB to feather connection
@@ -34,9 +44,9 @@ enum TestStatus {eWaitConnect=0,eTestAddr,eTestAlert,eTestTemp,ePassed,eFailed,e
 #define DELAYX100MS   5       //delay how many 100mS before repeat an execution
 int count=0;                                  //for debounce
 unsigned int delayCounter=0;
-int delay100mS = 5;                                  //wait time between repeated commands,in 100mS
+int delay100mS = DELAYX100MS;                  //wait time between repeated commands,in 100mS
 enum RepeatCommands eCommandCode = eTest;      //commandCode decide which command to execute
-bool repeat = true, execute = true;     //bool switches to control if execute / repeat a command
+bool repeat = true, execute = false;     //bool switches to control if execute / repeat a command
 enum TestStatus eStatusCode = eWaitConnect;
 Adafruit_MCP9808 tempsensor = Adafruit_MCP9808();
 
@@ -62,9 +72,9 @@ bool addressTest(void);
 //  I/O pin initialization
     pinMode(ALERT, INPUT_PULLUP);        //For Alert from mcp9808, it is open drain, so need to be pull-up
     
-    pinMode(A2, INPUT);                   //For address control A2,A1,A0, pull-down on the TSB, so keep them high-impedance
-    pinMode(A1, INPUT);
-    pinMode(A0, INPUT);
+    pinMode(A2, INPUT_PULLUP);                   //For address control A2,A1,A0, pull-down on the TSB, so keep them high-impedance
+    pinMode(A1, INPUT_PULLUP);
+    pinMode(A0, INPUT_PULLUP);
 
   }
 
@@ -73,7 +83,7 @@ bool addressTest(void);
     bool received = getCommandLineFromSerialPort(CommandLine);      //global CommandLine is defined in CommandLine.h
 //    int16_t Vbus,Vshunt;
     if (received) DoMyCommand(CommandLine);
-    if(++delayCounter>=DELAYX100MS){
+    if(++delayCounter>=delay100mS){
       delayCounter=0;
       if(repeat) execute=true;
     }
@@ -88,9 +98,11 @@ bool addressTest(void);
           Serial.println(readAlert());
           break;
         case eTest:
+//debug        Serial.print((int)eStatusCode);
+//        Serial.println(testStatusMessages[eStatusCode]);
           switch(eStatusCode){
             case eWaitConnect:
-              if(verifyAddress(DEFAULT_ADDRESS)){
+              if(deviceConnected()){
                 if(++count>DEBOUNCENUM){
                   eStatusCode=eTestAddr;
                   LED_OFF();                            //If last test failed, we turn off LED here, when started next test
@@ -139,7 +151,7 @@ bool addressTest(void);
               }
               break;
             case ePassed:
-              if(!verifyAddress(DEFAULT_ADDRESS)){        //Switch to Wait for connect status if DUT is disconnected
+              if(!deviceConnected()){        //Switch to Wait for connect status if DUT is disconnected
                 eStatusCode=eTestEnd;
                 Serial.print("\r\n");
 //                count=0;                                //initialize counter, for device connection detect debounce
@@ -152,7 +164,7 @@ bool addressTest(void);
               break;
             case eFailed:
               LED_ON();           //Turn on led to indicate a failure
-              if(!verifyAddress(DEFAULT_ADDRESS))
+              if(!deviceConnected())
                 eStatusCode=eTestEnd;
               break;
             case eTestEnd:
@@ -223,7 +235,7 @@ bool addrPinTest(byte pinNo,byte addr){
   digitalWrite(pinNo,HIGH);
   result=verifyAddress(addr);
   digitalWrite(pinNo,LOW);
-  pinMode(pinNo,INPUT);
+  pinMode(pinNo,INPUT_PULLUP);            //Set back to Input_pullup, for device connection detection
   return result;
 }
 int readAlert(void){
@@ -237,5 +249,12 @@ bool alertTest(void){
     tempsensor.write16(MCP9808_REG_CONFIG,0);                                 //Reset config to power-on default
   }
   return result;
+}
+/*************************************************
+ * To be used to detect a DUT is connected
+ * Seems I2C scan could cause problem when unstable connection, trying use I2C address pins
+ */
+bool deviceConnected(void){
+  return (digitalRead(A2)==0)&&(digitalRead(A1)==0)&&(digitalRead(A0)==0);
 }
 
